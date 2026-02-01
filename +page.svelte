@@ -1,15 +1,29 @@
 <script>
 	let studying = false;
+	let seconds = 0;
+	let timer;
 
-	function toggleStudy() {
-		studying = !studying;
+	function startStudy() {
+		if (studying) return;
+		studying = true;
+		timer = setInterval(() => {
+			seconds += 1;
+		}, 1000);
+	}
+
+	function stopStudy() {
+		studying = false;
+		clearInterval(timer);
 	}
 </script>
 
 <h1>ZenNexus</h1>
 
 <p>Status: {studying ? "Studying" : "Not Studying"}</p>
+<p>Time: {seconds} seconds</p>
 
-<button on:click={toggleStudy}>
-	{studying ? "Stop Study" : "Start Study"}
-</button>
+{#if !studying}
+	<button on:click={startStudy}>Start Study</button>
+{:else}
+	<button on:click={stopStudy}>Stop Study</button>
+{/if}
