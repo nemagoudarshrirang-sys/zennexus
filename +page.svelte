@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import { loadUserStats, saveUserStats } from '$lib/storage';
 
 	const SESSION_SECONDS = 25 * 60;
 
@@ -7,15 +8,40 @@
 	let completed = false;
 	let timeLeft = SESSION_SECONDS;
 	let timer;
-	let streak = 0;
 
-	// Circle math
+	let streak = 0;
+	let sessionsToday = 0;
+
 	const RADIUS = 60;
 	const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
+	function today() {
+		return new Date().toISOString().slice(0, 10);
+	}
+
 	onMount(() => {
-		const savedStreak = localStorage.getItem('streak');
-		if (savedStreak) streak = Number(savedStreak);
+		const {
+			streak: savedStreak,
+			sessionsToday: savedSessions,
+			lastStudyDate
+		} = loadUserStats();
+
+		const todayDate = today();
+
+		if (!lastStudyDate) {
+			streak = savedStreak;
+			sessionsToday = 0;
+		} else if (lastStudyDate === todayDate) {
+			streak = savedStreak;
+			sessionsToday = savedSessions;
+		} else {
+			const diff =
+				(new Date(todayDate) - new Date(lastStudyDate)) /
+				(1000 * 60 * 60 * 24);
+
+			if (diff > 1) streak = 0;
+			sessionsToday = 0;
+		}
 	});
 
 	function startStudy() {
@@ -38,8 +64,17 @@
 		studying = false;
 		completed = true;
 		timeLeft = 0;
-		streak += 1;
-		localStorage.setItem('streak', streak);
+
+		const todayDate = today();
+
+		sessionsToday += 1;
+		if (sessionsToday === 1) streak += 1;
+
+		saveUserStats({
+			streak,
+			sessionsToday,
+			lastStudyDate: todayDate
+		});
 	}
 
 	function resetTimer() {
@@ -55,17 +90,15 @@
 		return `${m}:${s < 10 ? '0' : ''}${s}`;
 	}
 
-	// Progress
 	$: progress = timeLeft / SESSION_SECONDS;
 	$: dashOffset = CIRCUMFERENCE * (1 - progress);
 
-	// 🔥 URGENCY COLOR LOGIC
 	$: ringColor =
 		timeLeft <= 60
-			? '#ef4444'      // red: last 1 min
+			? '#ef4444'
 			: timeLeft <= 300
-			? '#eab308'      // yellow: last 5 min
-			: '#22c55e';     // green: normal
+			? '#eab308'
+			: '#22c55e';
 </script>
 
 <div class="page">
@@ -75,12 +108,7 @@
 
 		<div class="ring-wrapper">
 			<svg width="160" height="160">
-				<circle
-					class="ring-bg"
-					r={RADIUS}
-					cx="80"
-					cy="80"
-				/>
+				<circle class="ring-bg" r={RADIUS} cx="80" cy="80" />
 				<circle
 					class="ring-progress"
 					r={RADIUS}
@@ -91,16 +119,15 @@
 					stroke-dashoffset={dashOffset}
 				/>
 			</svg>
-
 			<div class="time">{formatTime(timeLeft)}</div>
 		</div>
 
 		<p class="status {studying ? 'on' : completed ? 'done' : 'off'}">
 			{studying
-				? "Studying"
+				? 'Studying'
 				: completed
-				? "Session Completed"
-				: "Not Studying"}
+				? 'Session Completed'
+				: 'Not Studying'}
 		</p>
 
 		<div class="buttons">
@@ -207,17 +234,9 @@
 		color: #f8fafc;
 	}
 
-	.status.on {
-		color: #22c55e;
-	}
-
-	.status.off {
-		color: #94a3b8;
-	}
-
-	.status.done {
-		color: #38bdf8;
-	}
+	.status.on { color: #22c55e; }
+	.status.off { color: #94a3b8; }
+	.status.done { color: #38bdf8; }
 
 	.buttons {
 		display: flex;
@@ -234,20 +253,9 @@
 		cursor: pointer;
 	}
 
-	.start {
-		background: #22c55e;
-		color: black;
-	}
-
-	.pause {
-		background: #eab308;
-		color: black;
-	}
-
-	.reset {
-		background: #ef4444;
-		color: white;
-	}
+	.start { background: #22c55e; color: black; }
+	.pause { background: #eab308; color: black; }
+	.reset { background: #ef4444; color: white; }
 
 	.streak {
 		color: #cbd5f5;
