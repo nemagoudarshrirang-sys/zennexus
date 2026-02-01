@@ -1,21 +1,30 @@
 <script>
+	import { onMount } from 'svelte';
+
 	const SESSION_SECONDS = 25 * 60;
 
 	let studying = false;
 	let completed = false;
-	let seconds = 0;
+	let timeLeft = SESSION_SECONDS;
 	let timer;
 	let streak = 0;
+
+	// Circle math
+	const RADIUS = 60;
+	const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+
+	onMount(() => {
+		const savedStreak = localStorage.getItem('streak');
+		if (savedStreak) streak = Number(savedStreak);
+	});
 
 	function startStudy() {
 		if (studying || completed) return;
 		studying = true;
-		timer = setInterval(() => {
-			seconds += 1;
 
-			if (seconds >= SESSION_SECONDS) {
-				completeSession();
-			}
+		timer = setInterval(() => {
+			timeLeft -= 1;
+			if (timeLeft <= 0) completeSession();
 		}, 1000);
 	}
 
@@ -28,26 +37,63 @@
 		clearInterval(timer);
 		studying = false;
 		completed = true;
+		timeLeft = 0;
 		streak += 1;
+		localStorage.setItem('streak', streak);
 	}
 
 	function resetTimer() {
 		clearInterval(timer);
-		seconds = 0;
 		studying = false;
 		completed = false;
+		timeLeft = SESSION_SECONDS;
 	}
 
 	function formatTime(sec) {
-		const minutes = Math.floor(sec / 60);
-		const remainingSeconds = sec % 60;
-		return `${minutes}:${remainingSeconds < 10 ? '0' : ''}${remainingSeconds}`;
+		const m = Math.floor(sec / 60);
+		const s = sec % 60;
+		return `${m}:${s < 10 ? '0' : ''}${s}`;
 	}
+
+	// Progress
+	$: progress = timeLeft / SESSION_SECONDS;
+	$: dashOffset = CIRCUMFERENCE * (1 - progress);
+
+	// 🔥 URGENCY COLOR LOGIC
+	$: ringColor =
+		timeLeft <= 60
+			? '#ef4444'      // red: last 1 min
+			: timeLeft <= 300
+			? '#eab308'      // yellow: last 5 min
+			: '#22c55e';     // green: normal
 </script>
 
 <div class="page">
 	<div class="card {studying ? 'active' : completed ? 'done' : ''}">
 		<h1>ZenNexus</h1>
+		<p class="subtitle">1 Session = 25 minutes</p>
+
+		<div class="ring-wrapper">
+			<svg width="160" height="160">
+				<circle
+					class="ring-bg"
+					r={RADIUS}
+					cx="80"
+					cy="80"
+				/>
+				<circle
+					class="ring-progress"
+					r={RADIUS}
+					cx="80"
+					cy="80"
+					stroke={ringColor}
+					stroke-dasharray={CIRCUMFERENCE}
+					stroke-dashoffset={dashOffset}
+				/>
+			</svg>
+
+			<div class="time">{formatTime(timeLeft)}</div>
+		</div>
 
 		<p class="status {studying ? 'on' : completed ? 'done' : 'off'}">
 			{studying
@@ -56,8 +102,6 @@
 				? "Session Completed"
 				: "Not Studying"}
 		</p>
-
-		<div class="time">{formatTime(seconds)}</div>
 
 		<div class="buttons">
 			{#if !studying && !completed}
@@ -89,28 +133,78 @@
 		background: #0b1220;
 		padding: 32px 28px;
 		border-radius: 16px;
-		width: 280px;
+		width: 320px;
 		text-align: center;
 		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
-		transition: box-shadow 0.3s ease;
+		transition: box-shadow 0.6s ease;
 	}
 
 	.card.active {
-		box-shadow: 0 0 0 2px #22c55e, 0 25px 50px rgba(0, 0, 0, 0.7);
+		animation: glowPulse 2.5s ease-in-out infinite;
 	}
 
 	.card.done {
 		box-shadow: 0 0 0 2px #38bdf8, 0 25px 50px rgba(0, 0, 0, 0.7);
 	}
 
-	h1 {
-		margin-bottom: 8px;
-		color: #e5e7eb;
+	@keyframes glowPulse {
+		0% {
+			box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.4),
+			            0 20px 40px rgba(0, 0, 0, 0.5);
+		}
+		50% {
+			box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.85),
+			            0 25px 55px rgba(0, 0, 0, 0.75);
+		}
+		100% {
+			box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.4),
+			            0 20px 40px rgba(0, 0, 0, 0.5);
+		}
 	}
 
-	.status {
-		margin-bottom: 20px;
-		font-weight: 500;
+	h1 {
+		color: #e5e7eb;
+		margin-bottom: 4px;
+	}
+
+	.subtitle {
+		color: #94a3b8;
+		font-size: 0.8rem;
+		margin-bottom: 14px;
+	}
+
+	.ring-wrapper {
+		position: relative;
+		width: 160px;
+		height: 160px;
+		margin: 0 auto 12px;
+	}
+
+	svg {
+		transform: rotate(-90deg);
+	}
+
+	.ring-bg {
+		fill: none;
+		stroke: #1e293b;
+		stroke-width: 8;
+	}
+
+	.ring-progress {
+		fill: none;
+		stroke-width: 8;
+		stroke-linecap: round;
+		transition: stroke-dashoffset 0.5s linear, stroke 0.4s ease;
+	}
+
+	.time {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		font-size: 2rem;
+		font-weight: bold;
+		color: #f8fafc;
 	}
 
 	.status.on {
@@ -125,18 +219,11 @@
 		color: #38bdf8;
 	}
 
-	.time {
-		font-size: 2.5rem;
-		font-weight: bold;
-		margin-bottom: 24px;
-		color: #f8fafc;
-	}
-
 	.buttons {
 		display: flex;
-		gap: 10px;
 		justify-content: center;
-		margin-bottom: 16px;
+		gap: 10px;
+		margin: 14px 0;
 	}
 
 	button {
