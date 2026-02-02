@@ -1,6 +1,8 @@
 <script>
 	import { onMount } from 'svelte';
-	import { loadUserStats, saveUserStats } from '$lib/storage';
+	import { loadUserStats, saveUserStats } from '$lib/firestorestorage';
+    let syncStatus = 'saved'; // 'saving' | 'saved' | 'offline'
+
 
 	const SESSION_SECONDS = 25 * 60;
 
@@ -19,12 +21,12 @@
 		return new Date().toISOString().slice(0, 10);
 	}
 
-	onMount(() => {
+	onMount(async () => {
 		const {
 			streak: savedStreak,
 			sessionsToday: savedSessions,
 			lastStudyDate
-		} = loadUserStats();
+		} = await loadUserStats();
 
 		const todayDate = today();
 
@@ -48,9 +50,11 @@
 		if (studying || completed) return;
 		studying = true;
 
-		timer = setInterval(() => {
+		timer = setInterval(async () => {
 			timeLeft -= 1;
-			if (timeLeft <= 0) completeSession();
+			if (timeLeft <= 0) {
+				await completeSession();
+			}
 		}, 1000);
 	}
 
@@ -58,24 +62,33 @@
 		studying = false;
 		clearInterval(timer);
 	}
+async function completeSession() {
+	clearInterval(timer);
+	studying = false;
+	completed = true;
+	timeLeft = 0;
 
-	function completeSession() {
-		clearInterval(timer);
-		studying = false;
-		completed = true;
-		timeLeft = 0;
+	const todayDate = today();
 
-		const todayDate = today();
+	sessionsToday += 1;
+	if (sessionsToday === 1) streak += 1;
 
-		sessionsToday += 1;
-		if (sessionsToday === 1) streak += 1;
+	syncStatus = 'saving';
 
-		saveUserStats({
+	try {
+		await saveUserStats({
 			streak,
 			sessionsToday,
 			lastStudyDate: todayDate
 		});
+		syncStatus = 'saved';
+	} catch (e) {
+		console.error(e);
+		syncStatus = 'offline';
 	}
+}
+
+
 
 	function resetTimer() {
 		clearInterval(timer);
@@ -143,6 +156,14 @@
 		</div>
 
 		<p class="streak">🔥 Streak: {streak}</p>
+		<p class="sync {syncStatus}">
+	{syncStatus === 'saving'
+		? 'Saving…'
+		: syncStatus === 'saved'
+		? 'Saved'
+		: 'Offline'}
+</p>
+
 	</div>
 </div>
 
@@ -261,4 +282,23 @@
 		color: #cbd5f5;
 		font-size: 0.9rem;
 	}
+	/* Sync status */
+.sync {
+	font-size: 0.75rem;
+	margin-top: 4px;
+}
+
+.sync.saving {
+	color: #eab308; /* yellow */
+}
+
+.sync.saved {
+	color: #22c55e; /* green */
+}
+
+.sync.offline {
+	color: #ef4444; /* red */
+}
+
 </style>
+nc funct
