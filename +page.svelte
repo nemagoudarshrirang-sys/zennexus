@@ -5,6 +5,7 @@
 
 
 	const SESSION_SECONDS = 25 * 60;
+	const DAILY_GOAL = 4;
 
 	let studying = false;
 	let completed = false;
@@ -13,6 +14,7 @@
 
 	let streak = 0;
 	let sessionsToday = 0;
+	let todaySessions = [];
 
 	const RADIUS = 60;
 	const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -25,7 +27,8 @@
 		const {
 			streak: savedStreak,
 			sessionsToday: savedSessions,
-			lastStudyDate
+			lastStudyDate,
+			todaySessions: savedTodaySessions
 		} = await loadUserStats();
 
 		const todayDate = today();
@@ -33,16 +36,18 @@
 		if (!lastStudyDate) {
 			streak = savedStreak;
 			sessionsToday = 0;
+			todaySessions = [];
 		} else if (lastStudyDate === todayDate) {
 			streak = savedStreak;
 			sessionsToday = savedSessions;
+			todaySessions = Array.isArray(savedTodaySessions) ? savedTodaySessions.slice(-8) : [];
 		} else {
-			const diff =
-				(new Date(todayDate) - new Date(lastStudyDate)) /
-				(1000 * 60 * 60 * 24);
-
-			if (diff > 1) streak = 0;
+			const last = new Date(lastStudyDate);
+			const now = new Date();
+			const diffHours = (now - last) / (1000 * 60 * 60);
+			if (diffHours > 36) streak = 0;
 			sessionsToday = 0;
+			todaySessions = [];
 		}
 	});
 
@@ -73,13 +78,20 @@ async function completeSession() {
 	sessionsToday += 1;
 	if (sessionsToday === 1) streak += 1;
 
+	// append timestamp (HH:MM), cap to last 8
+	const d = new Date();
+	const hh = String(d.getHours()).padStart(2, '0');
+	const mm = String(d.getMinutes()).padStart(2, '0');
+	todaySessions = [...todaySessions, `${hh}:${mm}`].slice(-8);
+
 	syncStatus = 'saving';
 
 	try {
 		await saveUserStats({
 			streak,
 			sessionsToday,
-			lastStudyDate: todayDate
+			lastStudyDate: todayDate,
+			todaySessions
 		});
 		syncStatus = 'saved';
 	} catch (e) {
@@ -163,6 +175,16 @@ async function completeSession() {
 		? 'Saved'
 		: 'Offline'}
 </p>
+		<p class="goal">Sessions today: {sessionsToday} / {DAILY_GOAL}</p>
+
+		<div class="history">
+			<p class="history-label">Today:</p>
+			<ul class="history-list">
+				{#each todaySessions as t}
+					<li>• {t}</li>
+				{/each}
+			</ul>
+		</div>
 
 	</div>
 </div>
@@ -299,6 +321,31 @@ async function completeSession() {
 .sync.offline {
 	color: #ef4444; /* red */
 }
+
+	.goal {
+		font-size: 0.75rem;
+		color: #94a3b8;
+		margin-top: 6px;
+	}
+
+	.history {
+		margin-top: 6px;
+	}
+	.history-label {
+		font-size: 0.75rem;
+		color: #94a3b8;
+		margin-bottom: 2px;
+	}
+	.history-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		font-size: 0.78rem;
+		color: #cbd5f5;
+	}
+	.history-list li {
+		line-height: 1.3;
+	}
 
 </style>
 nc funct

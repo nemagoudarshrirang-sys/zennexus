@@ -11,17 +11,28 @@ export async function loadUserStats() {
 		return {
 			streak: 0,
 			sessionsToday: 0,
-			lastStudyDate: null
+			lastStudyDate: null,
+			todaySessions: []
 		};
 	}
 
-	return snap.data();
+	const data = snap.data();
+	return {
+		streak: data.streak ?? 0,
+		sessionsToday: data.sessionsToday ?? 0,
+		lastStudyDate: data.lastStudyDate ?? null,
+		todaySessions: Array.isArray(data.todaySessions) ? data.todaySessions : []
+	};
 }
 
-export async function saveUserStats({ streak, sessionsToday, lastStudyDate }) {
+/**
+ * @param {{ streak: number, sessionsToday: number, lastStudyDate: string|null, todaySessions: string[] }} stats
+ */
+export async function saveUserStats({ streak, sessionsToday, lastStudyDate, todaySessions }) {
 	await setDoc(userRef, {
 		streak,
 		sessionsToday,
-		lastStudyDate
+		lastStudyDate,
+		todaySessions
 	});
 }
