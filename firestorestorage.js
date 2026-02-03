@@ -1,11 +1,15 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '$lib/firebase';
+import { db, auth } from '$lib/firebase';
 
-// temporary single-user document
-const userRef = doc(db, 'users', 'demo-user');
+function getUserRef() {
+	const user = auth.currentUser;
+	if (!user) throw new Error('User not authenticated');
+	return doc(db, 'users', user.uid);
+}
 
 export async function loadUserStats() {
-	const snap = await getDoc(userRef);
+	const ref = getUserRef();
+	const snap = await getDoc(ref);
 
 	if (!snap.exists()) {
 		return {
@@ -25,14 +29,7 @@ export async function loadUserStats() {
 	};
 }
 
-/**
- * @param {{ streak: number, sessionsToday: number, lastStudyDate: string|null, todaySessions: string[] }} stats
- */
-export async function saveUserStats({ streak, sessionsToday, lastStudyDate, todaySessions }) {
-	await setDoc(userRef, {
-		streak,
-		sessionsToday,
-		lastStudyDate,
-		todaySessions
-	});
+export async function saveUserStats(stats) {
+	const ref = getUserRef();
+	await setDoc(ref, stats);
 }
