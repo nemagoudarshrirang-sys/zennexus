@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 node_modules/
 
 # Output
@@ -9,17 +8,6 @@ node_modules/
 .svelte-kit/
 /build
 dist/
-=======
-node_modules
-
-# Output
-.output
-.vercel
-.netlify
-.wrangler
-/.svelte-kit
-/build
->>>>>>> 5cc9ed7 (Day 2: ZenNexus base app and study toggle)
 
 # OS
 .DS_Store
