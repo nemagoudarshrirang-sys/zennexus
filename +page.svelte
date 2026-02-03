@@ -178,17 +178,24 @@ async function completeSession() {
 		<p class="goal">Sessions today: {sessionsToday} / {DAILY_GOAL}</p>
 
 		<div class="history">
-			<p class="history-label">Today:</p>
-			<ul class="history-list">
-				{#each todaySessions as t}
-					<li>• {t}</li>
-				{/each}
-			</ul>
-		</div>
+	<p class="history-label">Today:</p>
+
+	{#if todaySessions.length === 0}
+		<p class="empty-history">
+			No sessions yet today.<br />
+			Start your first 25-minute focus.
+		</p>
+	{:else}
+		<ul class="history-list">
+			{#each todaySessions as t}
+				<li>• {t}</li>
+			{/each}
+		</ul>
+	{/if}
+</div>
 
 	</div>
 </div>
-
 <style>
 	.page {
 		min-height: 100vh;
@@ -346,6 +353,11 @@ async function completeSession() {
 	.history-list li {
 		line-height: 1.3;
 	}
-
+	.empty-history {
+	font-size: 0.78rem;
+	color: #64748b;
+	line-height: 1.4;
+	margin-top: 2px;
+}
 </style>
 nc funct
