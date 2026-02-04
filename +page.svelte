@@ -1,6 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
-	import { loadUserStats, saveUserStats } from '$lib/firestorestorage';
+	import { loadUserStats, saveUserStats } from '$lib/firestorestorage.js';
     let syncStatus = 'saved'; // 'saving' | 'saved' | 'offline'
 
 
