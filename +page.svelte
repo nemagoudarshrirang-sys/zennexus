@@ -1,115 +1,91 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
-	import Chart from 'chart.js/auto';
-	import { auth } from '$lib/firebase.js';
-	import { loadUserStats } from '$lib/firestorestorage.js';
+	import { onMount } from 'svelte';
+	import { auth, db } from '$lib/firebase.js';
+	import { doc, getDoc, setDoc } from 'firebase/firestore';
 
-	let title = 'Weekly Focus';
-	let totalTimeMin = 0;
-	let totalSessions = 0;
-	let consistencyPct = 0;
-	let hasData = false;
-	let chart;
+	let plannedSessions = 4;
+	let plannedFocusMinutes = 100;
+	let plannedDate = '';
+	let ready = false;
+	let saving = false;
+	let saved = false;
+	let error = '';
 
-	function settingsFromLocal() {
-		try {
-			const raw = localStorage.getItem('zennexus_settings');
-			const p = raw ? JSON.parse(raw) : {};
-			return {
-				sessionLength: typeof p.sessionLength === 'number' ? p.sessionLength : 25,
-				dailyGoal: typeof p.dailyGoal === 'number' ? p.dailyGoal : 4
-			};
-		} catch {
-			return { sessionLength: 25, dailyGoal: 4 };
+	function tomorrowISO() {
+		const d = new Date();
+		d.setDate(d.getDate() + 1);
+		return d.toISOString().slice(0, 10);
+	}
+
+	async function loadPlan(uid) {
+		const ref = doc(db, 'users', uid, 'plans', plannedDate);
+		const snap = await getDoc(ref);
+		if (snap.exists()) {
+			const data = snap.data();
+			plannedSessions = Number(data.plannedSessions ?? plannedSessions);
+			plannedFocusMinutes = Number(data.plannedFocusMinutes ?? plannedFocusMinutes);
 		}
 	}
 
-	function last7Days() {
-		const now = new Date();
-		return Array.from({ length: 7 }).map((_, i) => {
-			const d = new Date(now);
-			d.setDate(now.getDate() - (6 - i));
-			return d;
-		});
+	async function savePlan() {
+		error = '';
+		saved = false;
+		if (!auth.currentUser) {
+			error = 'Not authenticated';
+			return;
+		}
+		try {
+			saving = true;
+			const uid = auth.currentUser.uid;
+			const ref = doc(db, 'users', uid, 'plans', plannedDate);
+			await setDoc(ref, {
+				plannedSessions: Number(plannedSessions),
+				plannedFocusMinutes: Number(plannedFocusMinutes),
+				plannedDate
+			});
+			saved = true;
+		} catch (e) {
+			error = 'Failed to save plan';
+		} finally {
+			saving = false;
+		}
 	}
 
 	onMount(() => {
+		plannedDate = tomorrowISO();
 		const unsub = auth.onAuthStateChanged(async (user) => {
 			if (!user) return;
-
-			const { sessionsToday, lastStudyDate } = await loadUserStats();
-			const { sessionLength, dailyGoal } = settingsFromLocal();
-
-			const days = last7Days();
-			const labels = days.map((d) => d.toLocaleDateString(undefined, { weekday: 'short' }));
-			const keys = days.map((d) => d.toISOString().slice(0, 10));
-			const data = keys.map((k) => (k === lastStudyDate ? sessionsToday : 0));
-
-			totalSessions = data.reduce((a, b) => a + b, 0);
-			totalTimeMin = totalSessions * sessionLength;
-			const metDays = data.filter((c) => c >= dailyGoal).length;
-			consistencyPct = Math.round((metDays / 7) * 100);
-			hasData = totalSessions > 0;
-
-			const ctx = document.getElementById('weeklyChart');
-			if (ctx) {
-				if (chart) chart.destroy();
-				chart = new Chart(ctx, {
-					type: 'bar',
-					data: {
-						labels,
-						datasets: [
-							{
-								label: 'Sessions',
-								data,
-								backgroundColor: '#22c55e'
-							}
-						]
-					},
-					options: {
-						plugins: { legend: { display: false } },
-						scales: {
-							x: { ticks: { color: '#e5e7eb' }, grid: { display: false } },
-							y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' }, beginAtZero: true, precision: 0 }
-						}
-					}
-				});
-			}
+			ready = true;
+			await loadPlan(user.uid);
 		});
-		onDestroy(() => {
-			unsub?.();
-			chart?.destroy();
-		});
+		return () => unsub?.();
 	});
 </script>
 
-<div class="page">
-	<div class="wrap">
-		<h2>{title}</h2>
-		<div class="metrics">
-			<div class="card">
-				<p class="label">Total Focus (min)</p>
-				<p class="value">{totalTimeMin}</p>
-			</div>
-			<div class="card">
-				<p class="label">Sessions</p>
-				<p class="value">{totalSessions}</p>
-			</div>
-			<div class="card">
-				<p class="label">Consistency</p>
-				<p class="value">{consistencyPct}%</p>
-			</div>
-		</div>
+<main class="page" aria-busy={!ready}>
+	<section class="wrap">
+		<h2>Tomorrow’s Plan</h2>
 
-		<div class="chart">
-			{#if !hasData}
-				<p class="empty">No data yet</p>
-			{:else}
-				<canvas id="weeklyChart" aria-label="Weekly sessions bar chart"></canvas>
-			{/if}
+		<div class="card">
+			<div class="row">
+				<label for="date">Date</label>
+				<input id="date" type="date" value={plannedDate} oninput={(e) => (plannedDate = e.target.value)} />
+			</div>
+			<div class="row">
+				<label for="sessions">Number of sessions</label>
+				<input id="sessions" type="number" min="1" max="20" value={plannedSessions} oninput={(e) => (plannedSessions = Number(e.target.value))} />
+			</div>
+			<div class="row">
+				<label for="minutes">Total planned focus time (minutes)</label>
+				<input id="minutes" type="number" min="15" max="1000" value={plannedFocusMinutes} oninput={(e) => (plannedFocusMinutes = Number(e.target.value))} />
+			</div>
+
+			<button class="save" onclick={savePlan} aria-disabled={saving}>{saving ? 'Saving…' : 'Save Plan'}</button>
+			{#if saved}<p class="ok">Plan saved</p>{/if}
+			{#if error}<p class="err">{error}</p>{/if}
 		</div>
-	</div>
-</div>
+	</section>
+</main>
 
 <style>
 	.page {
@@ -121,25 +97,29 @@
 		font-family: system-ui, sans-serif;
 		color: #e5e7eb;
 	}
-	.wrap { width: 100%; max-width: 720px; padding: 16px; }
+	.wrap { width: 100%; max-width: 560px; padding: 16px; }
 	h2 { margin: 0 0 12px 0; font-size: 1rem; color: #e5e7eb; }
-	.metrics {
-		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: 10px;
-		margin-bottom: 12px;
-	}
-	.card {
+	.card { background: #0b1220; border-radius: 12px; padding: 16px; }
+	.row { display: grid; grid-template-columns: 1fr; gap: 6px; margin-bottom: 10px; }
+	label { color: #94a3b8; font-size: 0.85rem; }
+	input {
+		width: 100%;
+		padding: 10px;
+		border-radius: 10px;
+		border: 1px solid #1e293b;
 		background: #0b1220;
-		border-radius: 12px;
-		padding: 12px;
+		color: #e5e7eb;
 	}
-	.label { color: #94a3b8; font-size: 0.8rem; margin: 0 0 4px 0; }
-	.value { color: #e5e7eb; font-weight: 600; font-size: 1rem; margin: 0; }
-	.chart {
-		background: #0b1220;
-		border-radius: 12px;
-		padding: 12px;
+	.save {
+		margin-top: 6px;
+		width: 100%;
+		border: 1px solid #1e293b;
+		background: #22c55e;
+		color: black;
+		border-radius: 10px;
+		padding: 10px;
+		cursor: pointer;
 	}
-	.empty { color: #94a3b8; font-size: 0.85rem; }
+	.ok { color: #94a3b8; font-size: 0.85rem; margin-top: 6px; }
+	.err { color: #94a3b8; font-size: 0.85rem; margin-top: 6px; }
 </style>
