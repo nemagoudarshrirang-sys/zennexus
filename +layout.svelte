@@ -1,8 +1,11 @@
 <script lang="ts">
 	import favicon from '$lib/assets/favicon.svg';
 	import { theme } from '$lib/themeStore.js';
+	import { initIntegrityTracking } from '$lib/integrityTracker.js';
+	import SessionNotesOverlay from '$lib/SessionNotesOverlay.svelte';
 
 	let { children } = $props();
+	initIntegrityTracking();
 </script>
 
 <svelte:head>
@@ -13,7 +16,8 @@
 
 <a href="/settings" aria-label="Settings" class="settings-link">⚙️</a>
 <a href="/analytics" class="analytics-link">Analytics</a>
-<a href="#" aria-label="Toggle Theme" class="theme-bulb" on:click|preventDefault={() => theme.toggle()}>💡</a>
+<button type="button" aria-label="Toggle Theme" class="theme-bulb" onclick={() => theme.toggle()}>💡</button>
+<SessionNotesOverlay />
 
 <style>
 	:root[data-theme="dark"] .theme-bulb { color: #facc15; }
@@ -24,7 +28,6 @@
 		top: 10px;
 		right: 10px;
 		font-size: 18px;
-		text-decoration: none;
 		opacity: 0.9;
 		z-index: 1001;
 	}
