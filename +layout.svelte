@@ -2,10 +2,12 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { theme } from '$lib/themeStore.js';
 	import { initIntegrityTracking } from '$lib/integrityTracker.js';
+	import { initDailyTracker } from '$lib/dailyTracker.js';
 	import SessionNotesOverlay from '$lib/SessionNotesOverlay.svelte';
 
 	let { children } = $props();
 	initIntegrityTracking();
+	initDailyTracker();
 </script>
 
 <svelte:head>
