@@ -4,107 +4,97 @@
 	import { doc, getDoc } from 'firebase/firestore';
 
 	let ready = false;
-	let score = 0;
-	let totalSessions = 0;
-	let complianceDays = 0;
-	let missedDays = 0;
-	let earlyQuits = 0;
+	let weeks = [];
+	let selectedMinutes = null;
+	let selectedDate = '';
 
-	function last7Dates() {
-		const now = new Date();
-		return Array.from({ length: 7 }).map((_, i) => {
-			const d = new Date(now);
-			d.setDate(now.getDate() - (6 - i));
-			return d.toISOString().slice(0, 10);
-		});
+	function startDate() {
+		const d = new Date();
+		d.setDate(d.getDate() - 55); // ~8 weeks
+		return d;
 	}
-	function readSettings() {
-		try {
-			const p = JSON.parse(localStorage.getItem('zennexus_settings') || '{}');
-			return { dailyGoal: typeof p.dailyGoal === 'number' ? p.dailyGoal : 4 };
-		} catch {
-			return { dailyGoal: 4 };
-		}
+	function toISO(d) { return d.toISOString().slice(0, 10); }
+	function dayName(d) { return d.toLocaleDateString(undefined, { weekday: 'short' }).slice(0,1); }
+
+	async function fetchDay(uid, iso) {
+		const ref = doc(db, 'users', uid, 'daily', iso);
+		const snap = await getDoc(ref);
+		return snap.exists() ? Number(snap.data().minutes || 0) : 0;
 	}
-	function clamp(n) { return Math.max(0, Math.min(100, Math.round(n))); }
 
 	onMount(() => {
 		const unsub = auth.onAuthStateChanged(async (user) => {
 			if (!user) return;
-			const dates = last7Dates();
-			const { dailyGoal } = readSettings();
-
-			let sessionsSum = 0;
-			let compliance = 0;
-			let missed = 0;
-			let quits = 0;
-
-			for (const day of dates) {
-				const dRef = doc(db, 'users', user.uid, 'daily', day);
-				const sRef = doc(db, 'users', user.uid, 'integrity', day);
-				const dSnap = await getDoc(dRef);
-				const sSnap = await getDoc(sRef);
-				const sessions = dSnap.exists() ? Number(dSnap.data().sessions || 0) : 0;
-				const exits = sSnap.exists() ? Number(sSnap.data().exitAttempts || 0) : 0;
-				sessionsSum += sessions;
-				if (sessions >= dailyGoal) compliance += 1;
-				if (sessions === 0) missed += 1;
-				quits += exits;
+			const start = startDate();
+			const days = [];
+			for (let i = 0; i < 56; i++) {
+				const d = new Date(start);
+				d.setDate(start.getDate() + i);
+				days.push(d);
 			}
-
-			totalSessions = sessionsSum;
-			complianceDays = compliance;
-			missedDays = missed;
-			earlyQuits = quits;
-
-			const sessionsWeight = Math.min(totalSessions * 2, 40);
-			const complianceWeight = complianceDays * 8; // max 56
-			const missedPenalty = missedDays * 7;
-			const quitsPenalty = earlyQuits * 3;
-			score = clamp(sessionsWeight + complianceWeight - missedPenalty - quitsPenalty);
+			const rows = [];
+			for (let w = 0; w < 8; w++) {
+				const weekDays = days.slice(w * 7, w * 7 + 7);
+				const row = [];
+				for (const d of weekDays) {
+					const iso = toISO(d);
+					const minutes = await fetchDay(user.uid, iso);
+					row.push({ iso, minutes, label: dayName(d) });
+				}
+				rows.push(row);
+			}
+			weeks = rows;
 			ready = true;
 		});
 		return () => unsub?.();
 	});
+
+	function intensity(m) {
+		if (m === 0) return 'lv0';
+		if (m < 30) return 'lv1';
+		if (m < 60) return 'lv2';
+		if (m < 120) return 'lv3';
+		return 'lv4';
+	}
+
+	function pick(cell) {
+		selectedMinutes = cell.minutes;
+		selectedDate = cell.iso;
+	}
 </script>
 
 <main class="page" aria-busy={!ready}>
 	<section class="wrap">
-		<h2>Discipline Score</h2>
-		<div class="card big">
-			<p class="value">{score}</p>
-			<p class="muted">Weekly</p>
-		</div>
+		<h2>Focus Heatmap</h2>
 		<div class="grid">
-			<div class="card">
-				<p class="label">Sessions</p>
-				<p class="value">{totalSessions}</p>
-			</div>
-			<div class="card">
-				<p class="label">Daily Minimum Met</p>
-				<p class="value">{complianceDays}/7</p>
-			</div>
-			<div class="card">
-				<p class="label">Missed Days</p>
-				<p class="value">{missedDays}</p>
-			</div>
-			<div class="card">
-				<p class="label">Early Quits</p>
-				<p class="value">{earlyQuits}</p>
-			</div>
+			{#each weeks as row}
+				<div class="col">
+					{#each row as cell}
+						<button type="button" class="cell {intensity(cell.minutes)}" title={`${cell.iso}: ${cell.minutes} min`} onclick={() => pick(cell)}>
+							<span class="dot" aria-hidden="true"></span>
+						</button>
+					{/each}
+				</div>
+			{/each}
 		</div>
+		{#if selectedDate}
+			<p class="info">{selectedDate}: {selectedMinutes} min</p>
+		{/if}
 	</section>
-	</main>
+</main>
 
 <style>
 	.page { min-height: 100vh; background: #020617; display: flex; justify-content: center; align-items: center; font-family: system-ui, sans-serif; color: #e5e7eb; }
 	.wrap { width: 100%; max-width: 720px; padding: 16px; }
 	h2 { margin: 0 0 12px 0; font-size: 1rem; color: #e5e7eb; }
-	.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 12px; }
-	.card { background: #0b1220; border-radius: 12px; padding: 12px; }
-	.big { display: flex; align-items: baseline; justify-content: space-between; }
-	.label { color: #94a3b8; font-size: 0.8rem; margin: 0 0 4px 0; }
-	.value { color: #e5e7eb; font-weight: 600; font-size: 1rem; margin: 0; }
-	.big .value { font-size: 2.2rem; font-weight: 700; }
-	.muted { color: #94a3b8; font-size: 0.85rem; margin: 0; }
+	.grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+	.col { display: grid; grid-template-rows: repeat(7, 1fr); gap: 6px; }
+	.cell { width: 26px; height: 26px; border-radius: 6px; border: 1px solid #1e293b; background: #0b1220; display: flex; justify-content: center; align-items: center; cursor: pointer; }
+	.dot { width: 16px; height: 16px; border-radius: 4px; background: #0b1220; }
+	.lv0 .dot { background: #0b1220; }
+	.lv1 .dot { background: #0b7a2d; }
+	.lv2 .dot { background: #129c3a; }
+	.lv3 .dot { background: #18b74a; }
+	.lv4 .dot { background: #22c55e; }
+	.info { color: #94a3b8; margin-top: 10px; font-size: 0.85rem; }
 </style>
