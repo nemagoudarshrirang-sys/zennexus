@@ -1,64 +1,92 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { auth, db } from '$lib/firebase.js';
-	import { collection, getDocs } from 'firebase/firestore';
+	import { doc, getDoc } from 'firebase/firestore';
+	import Chart from 'chart.js/auto';
 
 	let ready = false;
-	let byEnergy = { Low: 0, Medium: 0, High: 0 };
-	let byTime = { Morning: { Low: 0, Medium: 0, High: 0 }, Afternoon: { Low: 0, Medium: 0, High: 0 }, Night: { Low: 0, Medium: 0, High: 0 } };
+	let probMet = 0;
+	let expectedSessions = 0;
+	let expectedMinutes = 0;
+	let chart;
 
-	function bucket(hour) {
-		if (hour >= 5 && hour <= 11) return 'Morning';
-		if (hour >= 12 && hour <= 17) return 'Afternoon';
-		return 'Night';
+	function lastNDates(n) {
+		const now = new Date();
+		return Array.from({ length: n }).map((_, i) => {
+			const d = new Date(now);
+			d.setDate(now.getDate() - (n - 1 - i));
+			return d.toISOString().slice(0, 10);
+		});
+	}
+	function readSettings() {
+		try {
+			const p = JSON.parse(localStorage.getItem('zennexus_settings') || '{}');
+			return {
+				dailyGoal: typeof p.dailyGoal === 'number' ? p.dailyGoal : 4,
+				sessionLength: typeof p.sessionLength === 'number' ? p.sessionLength : 25
+			};
+		} catch {
+			return { dailyGoal: 4, sessionLength: 25 };
+		}
 	}
 
 	onMount(() => {
 		const unsub = auth.onAuthStateChanged(async (user) => {
 			if (!user) return;
-			const col = collection(db, 'users', user.uid, 'sessions');
-			const snaps = await getDocs(col);
-			snaps.forEach((d) => {
-				const data = d.data();
-				const energy = data.energy || 'Medium';
-				const hour = Number(data.hour || 12);
-				byEnergy[energy] = (byEnergy[energy] || 0) + 1;
-				const b = bucket(hour);
-				byTime[b][energy] = (byTime[b][energy] || 0) + 1;
-			});
+			const dates = lastNDates(14);
+			const { dailyGoal, sessionLength } = readSettings();
+
+			const sessions = [];
+			for (const day of dates) {
+				const ref = doc(db, 'users', user.uid, 'daily', day);
+				const snap = await getDoc(ref);
+				sessions.push(snap.exists() ? Number(snap.data().sessions || 0) : 0);
+			}
+
+			const met = sessions.filter((c) => c >= dailyGoal).length;
+			probMet = Math.round((met / 14) * 100);
+			const recent = sessions.slice(-7);
+			expectedSessions = Math.round(recent.reduce((a, b) => a + b, 0) / recent.length);
+			expectedMinutes = expectedSessions * sessionLength;
+
+			const ctx = document.getElementById('trendChart');
+			if (ctx) {
+				if (chart) chart.destroy();
+				chart = new Chart(ctx, {
+					type: 'line',
+					data: {
+						labels: dates.map((d) => d.slice(5)),
+						datasets: [{ data: sessions, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.2)', tension: 0.2 }]
+					},
+					options: {
+						plugins: { legend: { display: false } },
+						scales: {
+							x: { ticks: { color: '#e5e7eb' }, grid: { display: false } },
+							y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' }, beginAtZero: true, precision: 0 }
+						}
+					}
+				});
+			}
 			ready = true;
 		});
-		return () => unsub?.();
+		onDestroy(() => {
+			unsub?.();
+			chart?.destroy();
+		});
 	});
 </script>
 
 <main class="page" aria-busy={!ready}>
 	<section class="wrap">
-		<h2>Energy Analytics</h2>
+		<h2>Focus Forecast</h2>
 
 		<div class="grid">
-			<div class="card">
-				<p class="label">Low</p>
-				<p class="value">{byEnergy.Low}</p>
-			</div>
-			<div class="card">
-				<p class="label">Medium</p>
-				<p class="value">{byEnergy.Medium}</p>
-			</div>
-			<div class="card">
-				<p class="label">High</p>
-				<p class="value">{byEnergy.High}</p>
-			</div>
+			<div class="card"><p class="label">Probability Met</p><p class="value">{probMet}%</p></div>
+			<div class="card"><p class="label">Expected Sessions</p><p class="value">{expectedSessions}</p></div>
+			<div class="card"><p class="label">Expected Focus (min)</p><p class="value">{expectedMinutes}</p></div>
 		</div>
 
-		<div class="table">
-			<div class="row head">
-				<div>Time</div><div>Low</div><div>Medium</div><div>High</div>
-			</div>
-			<div class="row"><div>Morning</div><div>{byTime.Morning.Low}</div><div>{byTime.Morning.Medium}</div><div>{byTime.Morning.High}</div></div>
-			<div class="row"><div>Afternoon</div><div>{byTime.Afternoon.Low}</div><div>{byTime.Afternoon.Medium}</div><div>{byTime.Afternoon.High}</div></div>
-			<div class="row"><div>Night</div><div>{byTime.Night.Low}</div><div>{byTime.Night.Medium}</div><div>{byTime.Night.High}</div></div>
-		</div>
+		<div class="chart"><canvas id="trendChart" aria-label="14-day sessions trend"></canvas></div>
 	</section>
 </main>
 
@@ -70,7 +98,5 @@
 	.card { background: #0b1220; border-radius: 12px; padding: 12px; }
 	.label { color: #94a3b8; font-size: 0.8rem; margin: 0 0 4px 0; }
 	.value { color: #e5e7eb; font-weight: 600; font-size: 1rem; margin: 0; }
-	.table { background: #0b1220; border-radius: 12px; padding: 12px; }
-	.row { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 8px; padding: 6px 0; }
-	.head { color: #94a3b8; }
+	.chart { background: #0b1220; border-radius: 12px; padding: 12px; }
 </style>
