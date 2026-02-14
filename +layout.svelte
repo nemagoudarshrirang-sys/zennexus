@@ -4,10 +4,14 @@
 	import { initIntegrityTracking } from '$lib/integrityTracker.js';
 	import { initDailyTracker } from '$lib/dailyTracker.js';
 	import SessionNotesOverlay from '$lib/SessionNotesOverlay.svelte';
+	import SessionEnergyOverlay from '$lib/SessionEnergyOverlay.svelte';
+	import { onMount } from 'svelte';
 
 	let { children } = $props();
-	initIntegrityTracking();
-	initDailyTracker();
+	onMount(() => {
+		initIntegrityTracking();
+		initDailyTracker();
+	});
 </script>
 
 <svelte:head>
@@ -20,6 +24,7 @@
 <a href="/analytics" class="analytics-link">Analytics</a>
 <button type="button" aria-label="Toggle Theme" class="theme-bulb" onclick={() => theme.toggle()}>💡</button>
 <SessionNotesOverlay />
+<SessionEnergyOverlay />
 
 <style>
 	:root[data-theme="dark"] .theme-bulb { color: #facc15; }

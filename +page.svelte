@@ -1,87 +1,96 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { auth, db } from '$lib/firebase.js';
 	import { doc, getDoc } from 'firebase/firestore';
+	let ChartMod = null;
 
 	let ready = false;
-	let dailyCurrent = 0;
-	let dailyLongest = 0;
-	let weeklyCurrent = 0;
-	let weeklyLongest = 0;
-	let perfectCurrent = 0;
-	let perfectLongest = 0;
+	let probMet = 0;
+	let expectedSessions = 0;
+	let expectedMinutes = 0;
+	let chart;
 
 	function lastNDates(n) {
 		const now = new Date();
 		return Array.from({ length: n }).map((_, i) => {
 			const d = new Date(now);
 			d.setDate(now.getDate() - (n - 1 - i));
-			return d;
+			return d.toISOString().slice(0, 10);
 		});
 	}
-	function toISO(d) { return d.toISOString().slice(0, 10); }
 	function readSettings() {
 		try {
 			const p = JSON.parse(localStorage.getItem('zennexus_settings') || '{}');
-			return { dailyGoal: typeof p.dailyGoal === 'number' ? p.dailyGoal : 4 };
-		} catch { return { dailyGoal: 4 }; }
+			return {
+				dailyGoal: typeof p.dailyGoal === 'number' ? p.dailyGoal : 4,
+				sessionLength: typeof p.sessionLength === 'number' ? p.sessionLength : 25
+			};
+		} catch {
+			return { dailyGoal: 4, sessionLength: 25 };
+		}
 	}
 
 	onMount(() => {
 		const unsub = auth.onAuthStateChanged(async (user) => {
 			if (!user) return;
-			const days = lastNDates(56);
-			const { dailyGoal } = readSettings();
+			const dates = lastNDates(14);
+			const { dailyGoal, sessionLength } = readSettings();
+
 			const sessions = [];
-			for (const d of days) {
-				const snap = await getDoc(doc(db, 'users', user.uid, 'daily', toISO(d)));
+			for (const day of dates) {
+				const ref = doc(db, 'users', user.uid, 'daily', day);
+				const snap = await getDoc(ref);
 				sessions.push(snap.exists() ? Number(snap.data().sessions || 0) : 0);
 			}
 
-			// Daily current and longest
-			let cur = 0, longest = 0;
-			for (let i = sessions.length - 1; i >= 0; i--) {
-				if (sessions[i] > 0) cur += 1; else break;
-			}
-			let run = 0;
-			for (let i = 0; i < sessions.length; i++) {
-				if (sessions[i] > 0) { run += 1; longest = Math.max(longest, run); } else { run = 0; }
-			}
-			dailyCurrent = cur; dailyLongest = longest;
+			const met = sessions.filter((c) => c >= dailyGoal).length;
+			probMet = Math.round((met / 14) * 100);
+			const recent = sessions.slice(-7);
+			expectedSessions = Math.round(recent.reduce((a, b) => a + b, 0) / recent.length);
+			expectedMinutes = expectedSessions * sessionLength;
 
-			// Weekly and perfect week (group by 7)
-			let weeks = [];
-			for (let i = 0; i < sessions.length; i += 7) {
-				const w = sessions.slice(i, i + 7);
-				weeks.push(w);
+			const ctx = document.getElementById('trendChart');
+			if (ctx) {
+				if (!ChartMod) {
+					const mod = await import('chart.js/auto');
+					ChartMod = mod.default || mod;
+				}
+				if (chart) chart.destroy();
+				chart = new ChartMod(ctx, {
+					type: 'line',
+					data: {
+						labels: dates.map((d) => d.slice(5)),
+						datasets: [{ data: sessions, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.2)', tension: 0.2 }]
+					},
+					options: {
+						plugins: { legend: { display: false } },
+						scales: {
+							x: { ticks: { color: '#e5e7eb' }, grid: { display: false } },
+							y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' }, beginAtZero: true, precision: 0 }
+						}
+					}
+				});
 			}
-			const weeklyFlags = weeks.map((w) => w.every((c) => c > 0));
-			const perfectFlags = weeks.map((w) => w.every((c) => c >= dailyGoal));
-
-			function streakInfo(flags) {
-				let cur = 0, longest = 0, run = 0;
-				for (let i = flags.length - 1; i >= 0; i--) { if (flags[i]) cur += 1; else break; }
-				for (let i = 0; i < flags.length; i++) { if (flags[i]) { run += 1; longest = Math.max(longest, run); } else run = 0; }
-				return { cur, longest };
-			}
-			const wInfo = streakInfo(weeklyFlags);
-			const pInfo = streakInfo(perfectFlags);
-			weeklyCurrent = wInfo.cur; weeklyLongest = wInfo.longest;
-			perfectCurrent = pInfo.cur; perfectLongest = pInfo.longest;
 			ready = true;
 		});
-		return () => unsub?.();
+		onDestroy(() => {
+			unsub?.();
+			chart?.destroy();
+		});
 	});
 </script>
 
 <main class="page" aria-busy={!ready}>
 	<section class="wrap">
-		<h2>Streak Layers</h2>
+		<h2>Focus Forecast</h2>
+
 		<div class="grid">
-			<div class="card"><p class="label">Daily</p><p class="value">{dailyCurrent}</p><p class="muted">Longest: {dailyLongest}</p></div>
-			<div class="card"><p class="label">Weekly</p><p class="value">{weeklyCurrent}</p><p class="muted">Longest: {weeklyLongest}</p></div>
-			<div class="card"><p class="label">Perfect Week</p><p class="value">{perfectCurrent}</p><p class="muted">Longest: {perfectLongest}</p></div>
+			<div class="card"><p class="label">Probability Met</p><p class="value">{probMet}%</p></div>
+			<div class="card"><p class="label">Expected Sessions</p><p class="value">{expectedSessions}</p></div>
+			<div class="card"><p class="label">Expected Focus (min)</p><p class="value">{expectedMinutes}</p></div>
 		</div>
+
+		<div class="chart"><canvas id="trendChart" aria-label="14-day sessions trend"></canvas></div>
 	</section>
 </main>
 
@@ -89,9 +98,9 @@
 	.page { min-height: 100vh; background: #020617; display: flex; justify-content: center; align-items: center; font-family: system-ui, sans-serif; color: #e5e7eb; }
 	.wrap { width: 100%; max-width: 720px; padding: 16px; }
 	h2 { margin: 0 0 12px 0; font-size: 1rem; color: #e5e7eb; }
-	.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+	.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
 	.card { background: #0b1220; border-radius: 12px; padding: 12px; }
 	.label { color: #94a3b8; font-size: 0.8rem; margin: 0 0 4px 0; }
 	.value { color: #e5e7eb; font-weight: 600; font-size: 1rem; margin: 0; }
-	.muted { color: #94a3b8; font-size: 0.85rem; margin: 4px 0 0; }
+	.chart { background: #0b1220; border-radius: 12px; padding: 12px; }
 </style>
