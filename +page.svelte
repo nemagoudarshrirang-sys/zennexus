@@ -1,106 +1,137 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
+	import { settings } from '$lib/settingsStore.js';
+	import { onMount } from 'svelte';
 	import { auth, db } from '$lib/firebase.js';
-	import { doc, getDoc } from 'firebase/firestore';
-	let ChartMod = null;
+	import { doc, getDoc, setDoc } from 'firebase/firestore';
 
-	let ready = false;
-	let probMet = 0;
-	let expectedSessions = 0;
-	let expectedMinutes = 0;
-	let chart;
-
-	function lastNDates(n) {
-		const now = new Date();
-		return Array.from({ length: n }).map((_, i) => {
-			const d = new Date(now);
-			d.setDate(now.getDate() - (n - 1 - i));
-			return d.toISOString().slice(0, 10);
-		});
-	}
-	function readSettings() {
-		try {
-			const p = JSON.parse(localStorage.getItem('zennexus_settings') || '{}');
-			return {
-				dailyGoal: typeof p.dailyGoal === 'number' ? p.dailyGoal : 4,
-				sessionLength: typeof p.sessionLength === 'number' ? p.sessionLength : 25
-			};
-		} catch {
-			return { dailyGoal: 4, sessionLength: 25 };
-		}
-	}
+	let soundEnabled = true;
+	let autoStartNext = false;
+	let minimalStats = false;
+	let hardMode = false;
 
 	onMount(() => {
+		try {
+			const raw = localStorage.getItem('zennexus_settings_extras');
+			if (raw) {
+				const p = JSON.parse(raw);
+				soundEnabled = p.soundEnabled !== false;
+				autoStartNext = p.autoStartNext === true;
+				minimalStats = p.minimalStats === true;
+			}
+		} catch {}
 		const unsub = auth.onAuthStateChanged(async (user) => {
 			if (!user) return;
-			const dates = lastNDates(14);
-			const { dailyGoal, sessionLength } = readSettings();
-
-			const sessions = [];
-			for (const day of dates) {
-				const ref = doc(db, 'users', user.uid, 'daily', day);
-				const snap = await getDoc(ref);
-				sessions.push(snap.exists() ? Number(snap.data().sessions || 0) : 0);
-			}
-
-			const met = sessions.filter((c) => c >= dailyGoal).length;
-			probMet = Math.round((met / 14) * 100);
-			const recent = sessions.slice(-7);
-			expectedSessions = Math.round(recent.reduce((a, b) => a + b, 0) / recent.length);
-			expectedMinutes = expectedSessions * sessionLength;
-
-			const ctx = document.getElementById('trendChart');
-			if (ctx) {
-				if (!ChartMod) {
-					const mod = await import('chart.js/auto');
-					ChartMod = mod.default || mod;
-				}
-				if (chart) chart.destroy();
-				chart = new ChartMod(ctx, {
-					type: 'line',
-					data: {
-						labels: dates.map((d) => d.slice(5)),
-						datasets: [{ data: sessions, borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.2)', tension: 0.2 }]
-					},
-					options: {
-						plugins: { legend: { display: false } },
-						scales: {
-							x: { ticks: { color: '#e5e7eb' }, grid: { display: false } },
-							y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' }, beginAtZero: true, precision: 0 }
-						}
-					}
-				});
-			}
-			ready = true;
+			const ref = doc(db, 'users', user.uid, 'settings', 'prefs');
+			const snap = await getDoc(ref);
+			hardMode = snap.exists() ? !!snap.data().hardMode : false;
 		});
-		onDestroy(() => {
-			unsub?.();
-			chart?.destroy();
-		});
+		return () => unsub?.();
 	});
+
+	function persistExtras() {
+		localStorage.setItem(
+			'zennexus_settings_extras',
+			JSON.stringify({ soundEnabled, autoStartNext, minimalStats })
+		);
+	}
 </script>
 
-<main class="page" aria-busy={!ready}>
-	<section class="wrap">
-		<h2>Focus Forecast</h2>
+<div class="page">
+	<div class="card">
+		<h2>Settings</h2>
 
-		<div class="grid">
-			<div class="card"><p class="label">Probability Met</p><p class="value">{probMet}%</p></div>
-			<div class="card"><p class="label">Expected Sessions</p><p class="value">{expectedSessions}</p></div>
-			<div class="card"><p class="label">Expected Focus (min)</p><p class="value">{expectedMinutes}</p></div>
-		</div>
+		<section class="item">
+			<div class="label">Session Length</div>
+			<div class="controls">
+				<button aria-label="decrease session" onclick={settings.decrementSessionLength}>−</button>
+				<span class="value">{$settings.sessionLength} min</span>
+				<button aria-label="increase session" onclick={settings.incrementSessionLength}>+</button>
+			</div>
+			<div class="hint">Applies to future sessions</div>
+		</section>
 
-		<div class="chart"><canvas id="trendChart" aria-label="14-day sessions trend"></canvas></div>
-	</section>
-</main>
+		<section class="item">
+			<div class="label">Daily Goal</div>
+			<div class="controls">
+				<button aria-label="decrease goal" onclick={settings.decrementDailyGoal}>−</button>
+				<span class="value">{$settings.dailyGoal}</span>
+				<button aria-label="increase goal" onclick={settings.incrementDailyGoal}>+</button>
+			</div>
+		</section>
+
+		<section class="item">
+			<div class="label">Theme Mode</div>
+			<div class="controls">
+				<button aria-label="toggle theme" onclick={settings.toggleTheme}>
+					{$settings.theme === 'dark' ? 'Dark' : 'Light'}
+				</button>
+			</div>
+			<div class="hint">Soft background/text only</div>
+		</section>
+
+		<section class="item">
+			<div class="label">Focus Lock</div>
+			<div class="controls">
+				<button aria-label="toggle focus lock" onclick={settings.toggleFocusLock}>
+					{$settings.focusLock ? 'On' : 'Off'}
+				</button>
+			</div>
+			<div class="hint">Background darkens; shows “Focus Lock Active” text.</div>
+		</section>
+
+		<section class="item">
+			<div class="label">Sound</div>
+			<div class="controls">
+				<button aria-label="toggle sound" onclick={() => { soundEnabled = !soundEnabled; persistExtras(); }}>
+					{soundEnabled ? 'Enabled' : 'Disabled'}
+				</button>
+			</div>
+		</section>
+
+		<section class="item">
+			<div class="label">Auto-start Next Session</div>
+			<div class="controls">
+				<button aria-label="toggle auto-start" onclick={() => { autoStartNext = !autoStartNext; persistExtras(); }}>
+					{autoStartNext ? 'On' : 'Off'}
+				</button>
+			</div>
+		</section>
+
+		<section class="item">
+			<div class="label">Minimal Stats View</div>
+			<div class="controls">
+				<button aria-label="toggle minimal stats" onclick={() => { minimalStats = !minimalStats; persistExtras(); }}>
+					{minimalStats ? 'Hide' : 'Show'}
+				</button>
+			</div>
+		</section>
+
+		<section class="item">
+			<div class="label">Hard Mode</div>
+			<div class="controls">
+				<button aria-label="toggle hard mode" onclick={async () => {
+					if (!auth.currentUser) return;
+					hardMode = !hardMode;
+					await setDoc(doc(db, 'users', auth.currentUser.uid, 'settings', 'prefs'), { hardMode }, { merge: true });
+				}}>
+					{hardMode ? 'On' : 'Off'}
+				</button>
+			</div>
+			<div class="hint">Prevents edits, streak recovery, and mid-session changes.</div>
+		</section>
+	</div>
+</div>
 
 <style>
-	.page { min-height: 100vh; background: #020617; display: flex; justify-content: center; align-items: center; font-family: system-ui, sans-serif; color: #e5e7eb; }
-	.wrap { width: 100%; max-width: 720px; padding: 16px; }
-	h2 { margin: 0 0 12px 0; font-size: 1rem; color: #e5e7eb; }
-	.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
-	.card { background: #0b1220; border-radius: 12px; padding: 12px; }
-	.label { color: #94a3b8; font-size: 0.8rem; margin: 0 0 4px 0; }
-	.value { color: #e5e7eb; font-weight: 600; font-size: 1rem; margin: 0; }
-	.chart { background: #0b1220; border-radius: 12px; padding: 12px; }
+	:global(:root[data-theme="dark"]) .page { --bg:#020617; --card:#0b1220; --text:#e5e7eb; --muted:#94a3b8; --value:#f8fafc; --border:#1e293b; }
+	:global(:root[data-theme="light"]) .page { --bg:#f8fafc; --card:#ffffff; --text:#0b1220; --muted:#475569; --value:#0b1220; --border:#cbd5e1; }
+	.page { min-height:100vh; background: var(--bg, #020617); display:flex; justify-content:center; align-items:center; font-family: system-ui, sans-serif; }
+	.card { background: var(--card, #0b1220); padding: 20px 18px; border-radius: 14px; width: 320px; text-align: left; }
+	h2 { margin: 0 0 8px 0; color: var(--text, #e5e7eb); font-size: 1rem; }
+	.item { margin-top: 10px; }
+	.label { color: var(--muted, #94a3b8); font-size: 0.8rem; margin-bottom: 6px; }
+	.controls { display: flex; align-items: center; gap: 8px; }
+	.value { color: var(--value, #f8fafc); font-weight: 600; }
+	button { border: 1px solid var(--border, #1e293b); background: var(--card, #0b1220); color: var(--text, #e5e7eb); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+	.hint { color: var(--muted, #64748b); font-size: 0.7rem; margin-top: 4px; }
 </style>
