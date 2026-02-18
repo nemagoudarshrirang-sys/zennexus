@@ -3,88 +3,173 @@
 	import { auth, db } from '$lib/firebase.js';
 	import { doc, getDoc, setDoc } from 'firebase/firestore';
 
-	const today = new Date().toISOString().slice(0, 10);
+	let plannedSessions = 4;
+	let plannedMinutes = 100;
+	let plannedDate = '';
+	let ready = false;
+	let saving = false;
+	let saved = false;
+	let error = '';
+	let isPast = false;
 
-	let saved = null;
-	let wentWell = '';
-	let distractions = '';
-	let improvement = '';
+	function tomorrowISO() {
+		const d = new Date();
+		d.setDate(d.getDate() + 1);
+		return d.toISOString().slice(0, 10);
+	}
+
+	async function loadPlan(uid) {
+		const snap = await getDoc(doc(db, 'users', uid));
+		if (!snap.exists()) return;
+		const data = snap.data();
+		const entry = data?.plannerData?.[plannedDate];
+		if (!entry) return;
+		plannedSessions = Number(entry.plannedSessions ?? plannedSessions);
+		plannedMinutes = Number(entry.plannedMinutes ?? plannedMinutes);
+	}
+
+	async function savePlan() {
+		error = '';
+		saved = false;
+		if (!auth.currentUser) {
+			error = 'Not authenticated';
+			return;
+		}
+		if (isPast) {
+			error = 'Cannot edit past plans';
+			return;
+		}
+		try {
+			saving = true;
+			const uid = auth.currentUser.uid;
+			await setDoc(
+				doc(db, 'users', uid),
+				{
+					plannerData: {
+						[plannedDate]: {
+							plannedSessions: Number(plannedSessions),
+							plannedMinutes: Number(plannedMinutes)
+						}
+					}
+				},
+				{ merge: true }
+			);
+			saved = true;
+		} catch (e) {
+			error = 'Failed to save plan';
+		} finally {
+			saving = false;
+		}
+	}
+
+	function computeIsPast(dateStr) {
+		const today = new Date().toISOString().slice(0, 10);
+		return dateStr < today;
+	}
 
 	onMount(() => {
+		plannedDate = tomorrowISO();
+		isPast = computeIsPast(plannedDate);
 		const unsub = auth.onAuthStateChanged(async (user) => {
 			if (!user) return;
-			const snap = await getDoc(doc(db, 'users', user.uid));
-			if (snap.exists()) {
-				const data = snap.data();
-				const r = data?.reflectionData?.[today];
-				if (r) {
-					saved = {
-						wentWell: String(r.wentWell || ''),
-						distractions: String(r.distractions || ''),
-						improvement: String(r.improvement || '')
-					};
-				}
-			}
+			ready = true;
+			await loadPlan(user.uid);
 		});
 		return () => unsub?.();
 	});
-
-	async function save() {
-		if (!auth.currentUser) return;
-		const uid = auth.currentUser.uid;
-		const entry = {
-			wentWell: wentWell.trim(),
-			distractions: distractions.trim(),
-			improvement: improvement.trim()
-		};
-		await setDoc(
-			doc(db, 'users', uid),
-			{ reflectionData: { [today]: entry } },
-			{ merge: true }
-		);
-		saved = entry;
-	}
 </script>
 
-<div class="page">
-	<div class="card">
-		<h2>Daily Reflection</h2>
+<main class="page" aria-busy={!ready}>
+	<section class="wrap">
+		<h2>Tomorrow’s Plan</h2>
 
-		{#if saved}
-			<div class="read">
-				<p class="label">What went well today?</p>
-				<p class="text">{saved.wentWell || '—'}</p>
-				<p class="label">What distracted you?</p>
-				<p class="text">{saved.distractions || '—'}</p>
-				<p class="label">One thing to improve tomorrow</p>
-				<p class="text">{saved.improvement || '—'}</p>
+		<div class="card">
+			<div class="row">
+				<label for="date">Date</label>
+				<input id="date" type="date" value={plannedDate} oninput={async (e) => {
+					plannedDate = e.target.value;
+					isPast = plannedDate < new Date().toISOString().slice(0, 10);
+					if (auth.currentUser) {
+						await loadPlan(auth.currentUser.uid);
+					}
+				}} />
 			</div>
-		{:else}
-			<div class="item">
-				<p class="label">What went well today?</p>
-				<textarea class="ta" bind:value={wentWell}></textarea>
-			</div>
-			<div class="item">
-				<p class="label">What distracted you?</p>
-				<textarea class="ta" bind:value={distractions}></textarea>
-			</div>
-			<div class="item">
-				<p class="label">One thing to improve tomorrow</p>
-				<textarea class="ta" bind:value={improvement}></textarea>
-			</div>
-			<button class="save" onclick={save}>Save</button>
-		{/if}
-	</div>
-</div>
+
+			{#if isPast}
+				<div class="row">
+					<label>Planned sessions</label>
+					<p class="readonly">{plannedSessions}</p>
+				</div>
+				<div class="row">
+					<label>Planned minutes</label>
+					<p class="readonly">{plannedMinutes}</p>
+				</div>
+			{:else}
+				<div class="row">
+					<label for="sessions">Number of sessions</label>
+					<input id="sessions" type="number" min="1" max="20" value={plannedSessions} oninput={(e) => (plannedSessions = Number(e.target.value))} />
+				</div>
+				<div class="row">
+					<label for="minutes">Total planned focus time (minutes)</label>
+					<input id="minutes" type="number" min="15" max="1000" value={plannedMinutes} oninput={(e) => (plannedMinutes = Number(e.target.value))} />
+				</div>
+				<button class="save" onclick={savePlan} aria-disabled={saving}>{saving ? 'Saving…' : 'Save Plan'}</button>
+				{#if saved}<p class="ok">Plan saved</p>{/if}
+				{#if error}<p class="err">{error}</p>{/if}
+			{/if}
+		</div>
+
+		<section class="compare" aria-live="polite">
+			<h3 class="sub">Actual vs Planned</h3>
+			<p class="muted">Actual data will appear here in future.</p>
+			<ul class="list">
+				<li>Planned sessions: {plannedSessions}</li>
+				<li>Planned minutes: {plannedMinutes}</li>
+				<li>Actual sessions: —</li>
+				<li>Actual minutes: —</li>
+			</ul>
+		</section>
+	</section>
+</main>
 
 <style>
-	.page { min-height: 100vh; background: #020617; display: flex; justify-content: center; align-items: center; font-family: system-ui, sans-serif; }
-	.card { background: #0b1220; padding: 20px 18px; border-radius: 14px; width: 360px; text-align: left; }
-	h2 { margin: 0 0 8px 0; color: #e5e7eb; font-size: 1rem; }
-	.item { margin-top: 10px; }
-	.label { color: #e5e7eb; font-size: 0.85rem; margin-bottom: 6px; }
-	.ta { width: 100%; min-height: 72px; background: #0b1220; color: #e5e7eb; border: 1px solid #1e293b; border-radius: 10px; padding: 10px; }
-	.save { margin-top: 10px; width: 100%; border: 1px solid #1e293b; background: #22c55e; color: black; border-radius: 10px; padding: 10px; cursor: pointer; }
-	.read .text { color: #e5e7eb; white-space: pre-wrap; margin-bottom: 8px; }
-	.read .label { color: #e5e7eb; font-size: 0.85rem; margin: 8px 0 4px; }
+	.page {
+		min-height: 100vh;
+		background: #020617;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		font-family: system-ui, sans-serif;
+		color: #e5e7eb;
+	}
+	.wrap { width: 100%; max-width: 560px; padding: 16px; }
+	h2 { margin: 0 0 12px 0; font-size: 1rem; color: #e5e7eb; }
+	.card { background: #0b1220; border-radius: 12px; padding: 16px; }
+	.row { display: grid; grid-template-columns: 1fr; gap: 6px; margin-bottom: 10px; }
+	label { color: #94a3b8; font-size: 0.85rem; }
+	input {
+		width: 100%;
+		padding: 10px;
+		border-radius: 10px;
+		border: 1px solid #1e293b;
+		background: #0b1220;
+		color: #e5e7eb;
+	}
+	.save {
+		margin-top: 6px;
+		width: 100%;
+		border: 1px solid #1e293b;
+		background: #22c55e;
+		color: black;
+		border-radius: 10px;
+		padding: 10px;
+		cursor: pointer;
+	}
+	.ok { color: #94a3b8; font-size: 0.85rem; margin-top: 6px; }
+	.err { color: #94a3b8; font-size: 0.85rem; margin-top: 6px; }
+	.readonly { color: #e5e7eb; margin: 0; }
+	.compare { margin-top: 14px; background: #0b1220; border-radius: 12px; padding: 16px; }
+	.sub { margin: 0 0 6px 0; font-size: 0.95rem; color: #e5e7eb; }
+	.muted { color: #94a3b8; font-size: 0.85rem; margin: 0 0 8px; }
+	.list { margin: 0; padding-left: 18px; color: #e5e7eb; }
 </style>
